@@ -390,3 +390,24 @@ def test_postgres_urls_use_the_installed_driver():
         engine = db.get_engine(raw)  # builds the engine (no connection) without ModuleNotFoundError
         assert engine.dialect.driver == "psycopg2"
     assert db.normalize_url("sqlite:///x.db") == "sqlite:///x.db"
+
+
+def test_digest_line_uses_flat_arrow_when_unchanged():
+    from notify.send_digest import IpoMove
+
+    assert IpoMove("Acme", "acme", TODAY, 70, "up", 0, 0.0).line() == "▶ Acme: ₹70 (±₹0)"
+    assert IpoMove("Acme", "acme", TODAY, 70, "up", 5, 7.7).line().startswith("▲ Acme: ₹70 (+₹5")
+
+
+def test_dry_run_never_prints_device_ids(env, capsys):
+    from notify import send_digest
+
+    engine, files, tmp_path = env
+    run_scraper(engine, files, tmp_path, only="quatevel-coated-special-steels")
+    import backend.main as api
+    c = TestClient(importlib.reload(api).app)
+    uid, auth = _register(c, "privacy:" + "p" * 60)
+    assert c.post(f"/users/{uid}/track/quatevel-coated-special-steels", headers=auth).status_code == 204
+    send_digest.main(["--dry-run"])
+    out = capsys.readouterr().out
+    assert "--- device 1" in out and uid not in out

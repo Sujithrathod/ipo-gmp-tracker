@@ -44,7 +44,9 @@ class IpoMove:
     change_pct: float | None
 
     def line(self) -> str:
-        arrow = {"up": "▲", "down": "▼", "flat": "▶"}.get(self.trend or "", "•")
+        # A day with no change reads "▶" even if the source marked it "up"/"down".
+        trend = "flat" if self.change == 0 else self.trend
+        arrow = {"up": "▲", "down": "▼", "flat": "▶"}.get(trend or "", "•")
         text = f"{arrow} {self.name}: ₹{self.gmp}"
         if self.change is not None:
             sign = "+" if self.change > 0 else "−" if self.change < 0 else "±"
@@ -172,7 +174,7 @@ def send(digests: list[Digest], conn: sa.Connection) -> tuple[int, int]:
                 sent += 1
                 continue
             failed += 1
-            log.warning("Send failed for user %s: %s", d.user_id, r.exception)
+            log.warning("Send failed for one device: %s", type(r.exception).__name__)
             if isinstance(r.exception, (messaging.UnregisteredError, messaging.SenderIdMismatchError)):
                 # App uninstalled or token invalid: stop sending to it.
                 conn.execute(sa.update(db.users).where(db.users.c.fcm_token == d.token).values(fcm_token=None))
@@ -203,8 +205,9 @@ def main(argv: list[str] | None = None) -> int:
         digests = build_digests(conn, now, today)
         log.info("%d user digest(s) to send", len(digests))
         if args.dry_run:
-            for d in digests:
-                print(f"--- user {d.user_id}\n{d.title}\n{d.body}\ndata={d.data}\n")
+            # Logs of a public repo are public: number the devices, never print their ids.
+            for n, d in enumerate(digests, 1):
+                print(f"--- device {n}\n{d.title}\n{d.body}\ndata={d.data}\n")
             return 1 if stale else 0
         if not digests:
             return 1 if stale else 0
