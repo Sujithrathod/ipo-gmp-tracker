@@ -1,0 +1,4 @@
+<resources>
+    <!-- Compose draws the UI; this only sets the window before the first frame (light by default). -->
+    <style name="Theme.IpoGmp" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

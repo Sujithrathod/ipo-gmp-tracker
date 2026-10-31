@@ -1,0 +1,37 @@
+# Dependency updates, batched so the repo doesn't fill up with branches.
+# - One grouped PR per ecosystem: a library pinned in scraper/, backend/ and
+#   notify/ is bumped in all three files at once (separate PRs left the
+#   requirements out of sync and failed CI).
+# - Monthly cadence; security fixes still come immediately via
+#   Dependabot security updates (Settings > Code security).
+# - Android major versions (e.g. Android Gradle Plugin 9) need a planned
+#   upgrade, so they're not proposed automatically.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories: ["/scraper", "/backend", "/notify"]
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gradle
+    directory: "/android"
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
+    groups:
+      android-dependencies:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

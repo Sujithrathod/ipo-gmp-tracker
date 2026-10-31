@@ -1,0 +1,18 @@
+# Render blueprint: New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: ipo-gmp-api
+    runtime: python
+    plan: free
+    region: frankfurt # keep the API in the region nearest your database
+    buildCommand: pip install -r backend/requirements.txt
+    # --proxy-headers: rate limits see the real client IP behind Render's proxy.
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*' --no-server-header
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false # set in the Render dashboard; ideally the ipo_api role from db/roles.sql
+      - key: ENABLE_DOCS
+        value: "0" # hide /docs in production

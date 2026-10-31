@@ -1,0 +1,4 @@
+-r scraper/requirements.txt
+-r backend/requirements.txt
+-r notify/requirements.txt
+pytest==8.3.4

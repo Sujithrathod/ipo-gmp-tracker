@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: Android uses only the alpha channel, so it's a single white shape (rising chart). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,17.59L9,11.58l4,4L19.59,9H16V7h7v7h-2v-3.59l-8,8-4-4-5.41,5.41z" />
+</vector>

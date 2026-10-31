@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">IPO GMP</string>
+    <string name="widget_name">IPO GMP ranking</string>
+    <string name="widget_description">Open IPOs ranked by grey-market gain. Unofficial data, not advice.</string>
+</resources>

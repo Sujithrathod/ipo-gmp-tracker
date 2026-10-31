@@ -1,0 +1,65 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets: never commit these
+.env
+.env.*
+!.env.example
+*service-account*.json
+*firebase-adminsdk*.json
+android/app/google-services.json
+*.pem
+*.p12
+*.key
+*.keystore
+*.jks
+android/keystore.properties
+keystore.properties
+
+# Demo / local data (rebuilt by running the scraper)
+local.db
+*.db
+*.sqlite
+*.sqlite3
+scraper/output/
+scraper/logs/
+*.log
+
+# Images, screenshots, recordings: none of these belong in the repo.
+# (The app icon is a vector XML, not an image file.)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.heic
+*.svg
+*.ico
+*.mp4
+*.mov
+*.webm
+*.pdf
+screenshots/
+demo/
+
+# Local editor / assistant config (dev-only launch configs etc.)
+.claude/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Android build output
+android/.gradle/
+android/.idea/
+android/local.properties
+android/build/
+android/app/build/
+android/.kotlin/
+*.apk
+*.aab

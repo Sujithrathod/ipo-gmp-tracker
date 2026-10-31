@@ -1,0 +1,47 @@
+name: Daily GMP digest
+
+on:
+  schedule:
+    - cron: "30 4 * * *" # 04:30 UTC = 10:00 IST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print digests without sending"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-notify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: notify/requirements.txt
+
+      - run: pip install -r notify/requirements.txt
+
+      - name: Send digest
+        env:
+          # Separate least-privilege connection (db/roles.sql) if set, else the shared one.
+          DATABASE_URL: ${{ secrets.NOTIFY_DATABASE_URL || secrets.DATABASE_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::warning title=Not configured::DATABASE_URL / FIREBASE_SERVICE_ACCOUNT_JSON secrets are not set; skipping (see README > Deploy)."
+            exit 0
+          fi
+          python notify/send_digest.py ${{ inputs.dry_run && '--dry-run' || '' }}

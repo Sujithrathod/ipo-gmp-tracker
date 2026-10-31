@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>IPO GMP Tracker</title>
+<!-- Web preview of the Android app's screens, fed by the same API. Served at /preview. -->
+<script src="theme.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff; --surface: #ffffff; --text: #44475b; --strong: #2b2d3a; --muted: #7c7e8c; --line: #e9e9eb;
+    --primary: #5367ff; --up: #00b386; --down: #eb5b3c; --flat: #9ca3af; --pill: #f3f3f5;
+    --elevated: #ffffff; --shadow: 0 8px 28px rgba(20, 20, 40, .16);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121212; --surface: #121212; --text: #d1d1d6; --strong: #f2f2f5; --muted: #8e8e98; --line: #2c2c30;
+    --primary: #8b97ff; --up: #00c896; --down: #ff6b4a; --flat: #6b7280; --pill: #232327;
+    --elevated: #1d1d21; --shadow: 0 8px 28px rgba(0, 0, 0, .55);
+  }
+  .bar #title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar #theme { width: 40px; height: 40px; padding: 0; margin-right: -8px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+  .bar #theme:active { background: var(--pill); }
+  .bar #theme svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  header { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 2; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 14px 16px; font-weight: 600; font-size: 18px; color: var(--strong); }
+  .bar button { background: none; border: 0; color: var(--strong); font-size: 20px; padding: 0 6px 0 0; cursor: pointer; }
+  .tabs { display: flex; position: relative; }
+  .tabs button { flex: 1; background: none; border: 0; padding: 12px 4px; color: var(--muted); font: inherit; cursor: pointer; transition: color .2s; }
+  .tabs button.on { color: var(--primary); font-weight: 600; }
+  #ind { position: absolute; left: 0; bottom: 0; height: 2px; width: 25%; background: var(--primary); border-radius: 2px; transition: transform .25s ease; }
+  main.swipeable { touch-action: pan-y; }
+  main { max-width: 640px; margin: 0 auto; padding: 12px 16px 40px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+  .ipo { cursor: pointer; }
+  .name { font-weight: 600; font-size: 16px; color: var(--strong); }
+  .sub { color: var(--muted); font-size: 13px; }
+  .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 10px; }
+  .label { color: var(--muted); font-size: 12px; }
+  .gmp { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--strong); }
+  .badge { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
+  .chip { display: inline-block; margin-top: 8px; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+  .kv { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .kv:last-child { border: 0; }
+  h3 { margin: 0 0 8px; font-size: 15px; color: var(--strong); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 7px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+  td:first-child, th:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .note { color: var(--muted); font-size: 12px; text-align: center; margin-top: 16px; }
+  .center { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* ---- Groww-style chart ---- */
+  .gc { margin: 4px 0 18px; }
+  .gc-meta { color: var(--muted); font-size: 13px; }
+  .gc-value { font-size: 32px; font-weight: 600; color: var(--strong); letter-spacing: -0.5px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .gc-change { font-size: 15px; font-weight: 500; margin-left: 6px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+  .gc-range { font-size: 15px; color: var(--muted); margin-left: 4px; font-weight: 400; letter-spacing: 0; }
+  .gc-plot { position: relative; margin: 18px 0 0; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+  .gc-plot svg { display: block; overflow: visible; }
+  .gc-label { font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .gc-label .v { fill: var(--strong); font-weight: 600; }
+  .gc-pulse { animation: gc-pulse 1.6s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes gc-pulse { 0% { opacity: .45; transform: scale(.6); } 100% { opacity: 0; transform: scale(2.2); } }
+  @media (prefers-reduced-motion: reduce) { .gc-pulse { animation: none; opacity: .2; } }
+  .gc-ranges { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--line); }
+  .gc-ranges button { min-width: 52px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--text); font: 500 14px system-ui, sans-serif; cursor: pointer; }
+  .gc-ranges button.on { background: var(--pill); border-color: var(--strong); color: var(--strong); }
+
+  /* ---- Home dashboard ---- */
+  .dh-title { font-size: 22px; font-weight: 600; color: var(--strong); margin: 6px 0 2px; }
+  .dh-sub { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; align-items: center; gap: 8px; margin: 14px 0 12px; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .seg button, .order { border: 0; background: none; color: var(--muted); font: 500 13px system-ui, sans-serif; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+  .seg button.on { background: var(--pill); color: var(--strong); }
+  .order { margin-left: auto; border: 1px solid var(--line); color: var(--strong); }
+  .bars { padding: 6px 16px; }
+  .bar-row { display: grid; grid-template-columns: 18px minmax(0, 8.5em) 1fr auto; align-items: center; gap: 10px; padding: 9px 0; cursor: pointer; border-bottom: 1px solid var(--line); }
+  .bar-row:last-child { border: 0; }
+  .bar-rank { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .bar-name { font-size: 13px; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { height: 10px; border-radius: 999px; background: var(--pill); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width .35s ease; }
+  .bar-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 4.8em; text-align: right; }
+  .dcard .top { display: flex; gap: 12px; align-items: center; }
+  .rank { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--pill); color: var(--strong); display: grid; place-items: center; font-size: 12px; font-weight: 600; }
+  .dname { flex: 1; min-width: 0; }
+  .dname .name, .dname .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spark { flex: none; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .stats div { min-width: 0; }
+  .stats b { display: block; font-size: 14px; color: var(--strong); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section { font-size: 15px; font-weight: 600; color: var(--strong); margin: 22px 0 10px; }
+  /* ---- "About the company" card floating at the bottom of the detail screen ---- */
+  .about { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); max-width: 608px; margin: 0 auto;
+           background: var(--elevated); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
+           padding: 12px 48px 12px 16px; z-index: 5; animation: about-in .32s cubic-bezier(.2,.8,.2,1); }
+  @keyframes about-in { from { transform: translateY(24px); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .about { animation: none; } }
+  .about-label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .about-text { font-size: 14px; line-height: 1.45; color: var(--strong); cursor: pointer;
+                display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .about.open .about-text { display: block; max-height: 45vh; overflow-y: auto; white-space: pre-line; }
+  .about-more { background: none; border: 0; padding: 4px 0 0; color: var(--primary); font: 500 13px system-ui, sans-serif; cursor: pointer; }
+  .about-x { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%; border: 0;
+             background: var(--pill); color: var(--strong); font-size: 18px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+  .src { color: var(--primary); font-weight: 600; }
+  .buy-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .buy-btn { display: block; text-align: center; padding: 11px 8px; border-radius: 12px; font-weight: 600; text-decoration: none;
+             color: #fff; background: var(--primary); }
+  .buy-btn + .buy-btn { background: none; color: var(--primary); border: 1.5px solid var(--primary); }
+  .buy-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .disclaimer { font-size: 12px; color: var(--muted); background: var(--pill); border-radius: 10px; padding: 10px 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar"><button id="back" hidden aria-label="Back">←</button><span id="title">IPO GMP Tracker</span><button id="theme" aria-label="Switch to dark mode"></button></div>
+  <nav class="tabs" id="tabs">
+    <button data-s="home" class="on">Home</button><button data-s="current">Current</button><button data-s="upcoming">Upcoming</button><button data-s="listed">Listed</button><span id="ind" aria-hidden="true"></span>
+  </nav>
+</header>
+<main id="main"><div class="center">Loading…</div></main>
+
+<script src="app.js"></script>
+</body>
+</html>

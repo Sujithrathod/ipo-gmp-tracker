@@ -1,0 +1,62 @@
+name: Daily GMP scrape
+
+on:
+  schedule:
+    # 03:45 UTC = 09:15 IST. ipowatch posts the day's GMP row around 09:10 IST,
+    # so this picks up today's figure and still leaves ~45 min before the 10:00
+    # digest. GitHub cron can start several minutes late.
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Re-scrape IPOs even if scraped in the last 20h"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-scrape
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Not deployed yet: don't scrape into a throwaway database.
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning title=Not configured::DATABASE_URL secret is not set; skipping the scrape (see README > Deploy)."
+            exit 0
+          fi
+          python scraper/main.py ${{ inputs.force && '--force' || '' }}
+
+      - name: Upload output and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scrape-${{ github.run_id }}
+          path: |
+            scraper/output/
+            scraper/logs/
+          retention-days: 14
