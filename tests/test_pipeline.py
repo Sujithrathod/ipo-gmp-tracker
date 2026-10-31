@@ -380,3 +380,13 @@ def test_buy_links(client, env):
     shivelro = c.get("/ipos/shivelro-poly-fabs").json()["buy_links"]
     assert shivelro["groww"] == "https://groww.in/ipo" and shivelro["groww_exact"] is False
     assert c.get("/ipos/quatevel-coated-special-steels").json()["buy_links"] is None  # listed: nothing to apply for
+
+
+def test_postgres_urls_use_the_installed_driver():
+    # SQLAlchemy 2.1 maps plain postgresql:// to psycopg (v3), which we don't install.
+    for raw in ("postgres://u:p@db.example:5432/postgres", "postgresql://u:p@db.example:5432/postgres"):
+        url = db.normalize_url(raw)
+        assert url == "postgresql+psycopg2://u:p@db.example:5432/postgres"
+        engine = db.get_engine(raw)  # builds the engine (no connection) without ModuleNotFoundError
+        assert engine.dialect.driver == "psycopg2"
+    assert db.normalize_url("sqlite:///x.db") == "sqlite:///x.db"

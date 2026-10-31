@@ -83,11 +83,21 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def normalize_url(url: str) -> str:
+    """Pin the Postgres driver we install (psycopg2).
+
+    Supabase/Heroku hand out "postgres://" or "postgresql://" URLs. SQLAlchemy
+    rejects the first, and since 2.1 maps the second to psycopg (v3), so name
+    the driver explicitly rather than depend on the library's default.
+    """
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix):]
+    return url
+
+
 def get_engine(url: str | None = None) -> Engine:
-    url = url or os.environ.get("DATABASE_URL") or DEFAULT_SQLITE_URL
-    # Supabase/Heroku-style URLs use the "postgres://" scheme SQLAlchemy rejects.
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
+    url = normalize_url(url or os.environ.get("DATABASE_URL") or DEFAULT_SQLITE_URL)
     if url.startswith("sqlite"):
         engine = sa.create_engine(url)
 
