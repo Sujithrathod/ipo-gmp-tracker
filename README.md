@@ -101,7 +101,8 @@ Found a vulnerability? Please report it privately: see [SECURITY.md](SECURITY.md
 
 ## Reliability notes
 
-- GitHub's scheduled jobs can start a few minutes late.
+- GitHub's scheduled jobs are best-effort and can start late (sometimes by hours). For on-time runs,
+  `db/exact_schedule.sql` starts the two workflows from Supabase's scheduler; GitHub's schedule stays as a fallback.
 - Render's free tier sleeps when idle; the first request after a quiet period takes ~30-50 s.
 - If a source changes its layout, the daily run fails loudly instead of saving bad data.
 

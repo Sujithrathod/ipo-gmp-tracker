@@ -16,9 +16,37 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read # the gate below lists this workflow's own runs
 
 jobs:
+  # GitHub's own schedule can start hours late, so an exact-time trigger
+  # (db/exact_schedule.sql) starts this workflow by workflow_dispatch. The
+  # schedule above stays as a fallback and stands down if that already ran today.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          done_today=0
+          if [ "$EVENT" = "schedule" ]; then
+            done_today=$(gh api "repos/$REPO/actions/workflows/daily_notify.yml/runs?event=workflow_dispatch&created=>=$(date -u +%F)" \
+              -q '[.workflow_runs[] | select(.conclusion != "failure" and .conclusion != "cancelled")] | length' || echo 0)
+          fi
+          if [ "$done_today" = "0" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice title=Fallback not needed::Already started by the exact-time trigger today."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   notify:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
