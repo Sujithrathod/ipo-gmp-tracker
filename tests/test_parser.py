@@ -13,6 +13,7 @@ from scraper.parser import (
     parse_percent,
     parse_rupees,
     parse_trend,
+    parse_upcoming_calendar,
     slug_from_url,
 )
 
@@ -304,3 +305,57 @@ def test_groww_list_and_name_matching():
     hostile = '<script id="__NEXT_DATA__">{"props":{"pageProps":{"openDataList":[{"companyName":"X","searchId":"../../evil"},{"companyName":"Y","searchId":"javascript:alert(1)"}]}}}</script>'
     assert parse_groww_list(hostile) == []
     assert parse_groww_list("<html>no data</html>") == []
+
+
+# ---- ipowatch's Nov 2026 layout: one page per IPO, list filled in by script ----
+
+V2_TODAY = date(2026, 11, 14)
+
+
+@pytest.mark.parametrize("text,expected", [("+₹28", 28), ("+ ₹ 28", 28), ("- ₹ 3", -3), ("₹ 1,540", 1540), ("—", None)])
+def test_parse_rupees_new_formats(text, expected):
+    assert parse_rupees(text) == expected
+
+
+def test_parse_percent_new_formats():
+    assert parse_percent("+ 10.29 %") == 10.29
+    assert parse_percent("- 1.10 %") == -1.10
+
+
+def test_v2_slug_and_history_date():
+    assert slug_from_url("/norvale-crop-sciences-ipo-details/") == "norvale-crop-sciences"
+    assert parse_history_date("14-Nov-2026 04:00 PM", V2_TODAY) == date(2026, 11, 14)
+
+
+def test_v2_listing_reads_type_and_status_columns():
+    entries = {e.slug: e for e in parse_listing(fixture("ipowatch_v2_gmp_listing.html"))}
+    # the off-site link and the "GMP vs Listing Performance" table are ignored
+    assert set(entries) == {"norvale-crop-sciences", "pelmora-rentals"}
+    norvale, pelmora = entries["norvale-crop-sciences"], entries["pelmora-rentals"]
+    assert (norvale.category, norvale.site_status) == ("mainboard", "Upcoming")
+    assert (pelmora.category, pelmora.site_status) == ("sme", "Open")
+    assert norvale.gmp_url == norvale.details_url == "https://ipowatch.in/norvale-crop-sciences-ipo-details/"
+
+
+def test_v2_ipo_page_has_gmp_history_and_details():
+    html = fixture("ipowatch_v2_ipo_page.html")
+    rows, _ = parse_gmp_page(html, V2_TODAY)
+    # two updates on 14 Nov: the later one wins; trend comes from the day before
+    assert [(r.date.day, r.gmp, r.trend, r.gain_pct, r.last_updated) for r in rows] == [
+        (14, 28, "down", 10.29, "04:00 PM"),
+        (13, 45, "up", 16.54, "12:12 PM"),
+        (12, -3, None, -1.10, "11:00 AM"),
+    ]
+    meta = parse_details_page(html)
+    assert (meta.open_date, meta.close_date, meta.listing_date) == (date(2026, 11, 18), date(2026, 11, 20), date(2026, 11, 26))
+    assert (meta.price_band_min, meta.price_band_max, meta.lot_size, meta.category) == (259.0, 272.0, 55, "mainboard")
+    assert meta.about.startswith("Norvale Crop Sciences is a fictional maker")
+    assert "imaginary regions" in meta.about and "Contact" not in meta.about
+
+
+def test_v2_calendar_reads_full_date_ranges():
+    entries = {e.slug: e for e in parse_upcoming_calendar(fixture("ipowatch_v2_calendar.html"), V2_TODAY)}
+    assert set(entries) == {"norvale-crop-sciences", "tavrik-logistics"}  # TBA and closed rows are skipped
+    tavrik = entries["tavrik-logistics"]
+    assert (tavrik.open_date, tavrik.close_date, tavrik.site_status) == (date(2026, 11, 19), date(2026, 11, 23), "Upcoming")
+    assert tavrik.details_url == "https://ipowatch.in/tavrik-logistics-ipo-details/"

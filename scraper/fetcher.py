@@ -1,8 +1,8 @@
 """Page fetchers.
 
-PlaywrightFetcher is the default (renders JS, so it keeps working if the site
-moves the tables client-side). HttpFetcher is a lightweight alternative for
-quick local runs since ipowatch currently serves the tables in static HTML.
+PlaywrightFetcher is the default: ipowatch fills its GMP list and calendar
+tables with the page's own script, so those need a browser. HttpFetcher is a
+lightweight alternative for pages served as static HTML (the per-IPO pages).
 Both are wrapped in PoliteFetcher, which enforces the randomized delay.
 """
 from __future__ import annotations
@@ -48,50 +48,83 @@ class Fetcher(Protocol):
     def close(self) -> None: ...
 
 
+# Hosts whose pages build their tables in the browser; everywhere else scripting stays off.
+SCRIPTED_HOSTS = frozenset({"ipowatch.in", "www.ipowatch.in"})
+
+
 class PlaywrightFetcher:
     def __init__(self, timeout_ms: int = 45_000, javascript: bool | None = None):
         from playwright.sync_api import sync_playwright
 
-        # The GMP tables are server-rendered, so run with JavaScript off by default:
-        # third-party page scripts never execute. SCRAPER_ENABLE_JS=1 turns it back on
-        # if the site ever moves the tables client-side.
+        # ipowatch's list pages build their tables in the browser, so the page's own
+        # script has to run there. Requests to any host outside ALLOWED_HOSTS are
+        # dropped (see _route), so ad/analytics/third-party scripts never load or
+        # execute. SCRAPER_ENABLE_JS=0 turns scripting off everywhere.
         if javascript is None:
-            javascript = os.environ.get("SCRAPER_ENABLE_JS") == "1"
+            javascript = os.environ.get("SCRAPER_ENABLE_JS", "1") != "0"
 
+        self._javascript = javascript
         self._timeout_ms = timeout_ms
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=True)
-        self._context = self._browser.new_context(
-            user_agent=USER_AGENT,
-            locale="en-IN",
-            timezone_id="Asia/Kolkata",
-            viewport={"width": 1366, "height": 900},
-            java_script_enabled=javascript,
-            accept_downloads=False,
-            service_workers="block",
-        )
-        # Tables are all we need; skip heavy assets to keep load on the site low.
-        self._context.route(
-            "**/*",
-            lambda route: route.abort()
-            if route.request.resource_type in {"image", "media", "font", "stylesheet"}
-            else route.continue_(),
-        )
-        self._page = self._context.new_page()
+        self._contexts: dict[bool, object] = {}
+        self._pages: dict[bool, object] = {}
+
+    def _page_for(self, url: str):
+        scripted = self._javascript and (urlparse(url).hostname or "").lower() in SCRIPTED_HOSTS
+        if scripted not in self._pages:
+            context = self._browser.new_context(
+                user_agent=USER_AGENT,
+                locale="en-IN",
+                timezone_id="Asia/Kolkata",
+                viewport={"width": 1366, "height": 900},
+                java_script_enabled=scripted,
+                accept_downloads=False,
+                service_workers="block",
+            )
+            context.route("**/*", self._route)
+            self._contexts[scripted] = context
+            self._pages[scripted] = context.new_page()
+        return self._pages[scripted]
+
+    @staticmethod
+    def _route(route) -> None:
+        """Tables are all we need: skip heavy assets, and never leave the allowed hosts."""
+        request = route.request
+        try:
+            check_url(request.url)
+        except DisallowedURL:
+            return route.abort()
+        if request.resource_type in {"image", "media", "font", "stylesheet"}:
+            return route.abort()
+        route.continue_()
 
     def get(self, url: str) -> str:
-        resp = self._page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms)
+        page = self._page_for(url)
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms)
         if resp is None or resp.status >= 400:
             raise RuntimeError(f"HTTP {resp.status if resp else '??'} for {url}")
-        check_url(self._page.url)  # a redirect must not take us off-site
+        check_url(page.url)  # a redirect must not take us off-site
         try:
-            self._page.wait_for_selector("table", timeout=10_000)
+            served = resp.text()
+        except Exception:
+            served = ""
+        if "<table" in served:
+            # Already complete as served (the per-IPO pages): use that, not a DOM
+            # the page's script may be half-way through re-rendering.
+            return served
+        try:
+            page.wait_for_selector("table", timeout=10_000)
         except Exception:
             log.debug("No <table> appeared on %s within 10s", url)
-        return self._page.content()
+        try:  # let the page's data requests finish, so every table has its rows
+            page.wait_for_load_state("networkidle", timeout=10_000)
+        except Exception:
+            log.debug("%s still loading after 10s; using what is there", url)
+        return page.content()
 
     def close(self) -> None:
-        for closer in (self._context.close, self._browser.close, self._pw.stop):
+        for closer in (*(c.close for c in self._contexts.values()), self._browser.close, self._pw.stop):
             try:
                 closer()
             except Exception:  # pragma: no cover

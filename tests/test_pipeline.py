@@ -1,7 +1,7 @@
 """End-to-end: scraper -> SQLite -> API -> digest, all offline against fixtures."""
 import importlib
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -399,10 +399,12 @@ def test_digest_line_uses_flat_arrow_when_unchanged():
     assert IpoMove("Acme", "acme", TODAY, 70, "up", 5, 7.7).line().startswith("▲ Acme: ₹70 (+₹5")
 
 
-def test_dry_run_never_prints_device_ids(env, capsys):
+def test_dry_run_never_prints_device_ids(env, capsys, monkeypatch):
     from notify import send_digest
 
     engine, files, tmp_path = env
+    # The fixture's GMP rows are dated; pin the clock so "today" has a row whatever day the tests run.
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 10, 31, 5, 0, tzinfo=timezone.utc))
     run_scraper(engine, files, tmp_path, only="quatevel-coated-special-steels")
     import backend.main as api
     c = TestClient(importlib.reload(api).app)
@@ -411,3 +413,27 @@ def test_dry_run_never_prints_device_ids(env, capsys):
     send_digest.main(["--dry-run"])
     out = capsys.readouterr().out
     assert "--- device 1" in out and uid not in out
+
+
+def test_new_layout_scrapes_each_ipo_page_once(env):
+    """Nov 2026 layout: the IPO's page holds both the details and the day-wise GMP."""
+    engine, _, tmp_path = env
+    page = "https://ipowatch.in/norvale-crop-sciences-ipo-details/"
+    files = {LISTING: FIX / "ipowatch_v2_gmp_listing.html", page: FIX / "ipowatch_v2_ipo_page.html"}
+    inner = FileFetcher(files)
+    code = scraper.run(
+        PoliteFetcher(inner, delay_range=(0, 0), retries=0), engine=engine, output_dir=tmp_path / "out",
+        failures_log=tmp_path / "failures.log", today=date(2026, 11, 14), listing_urls=[LISTING],
+        calendar_urls=[], backup_urls=[], broker_urls=[], only="norvale-crop-sciences",
+    )
+    assert code == 0
+    assert inner.requested == [LISTING, page]  # one request for the IPO, not two
+    with engine.connect() as conn:
+        ipo = conn.execute(sa.select(db.ipos).where(db.ipos.c.slug == "norvale-crop-sciences")).one()
+        gmps = conn.execute(
+            sa.select(db.gmp_history.c.date, db.gmp_history.c.gmp_value)
+            .where(db.gmp_history.c.ipo_id == ipo.id).order_by(db.gmp_history.c.date)
+        ).all()
+    assert (ipo.status, ipo.category, ipo.lot_size, ipo.price_band_max, ipo.listing_date) == (
+        "upcoming", "mainboard", 55, 272, date(2026, 11, 26))
+    assert [(d.day, g) for d, g in gmps] == [(12, -3), (13, 45), (14, 28)]

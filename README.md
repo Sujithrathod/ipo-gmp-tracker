@@ -33,7 +33,7 @@ primary has none). The app's "Apply" buttons link to the IPO's public page on
 The collector is deliberately light:
 
 - runs **once a day**, about 35 page loads in total, with 2-4 s pauses between requests;
-- fetches only from an allowlist of those hosts, over HTTPS, with page JavaScript disabled;
+- fetches only from an allowlist of those hosts, over HTTPS; requests to any other host (ads, analytics, third-party scripts) are blocked;
 - keeps only the figures needed for the charts, and credits the source in the app.
 
 This project is **not affiliated with or endorsed by** ipowatch, investorgain,

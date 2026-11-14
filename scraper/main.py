@@ -37,15 +37,13 @@ from scraper.parser import (  # noqa: E402
     parse_details_page,
     parse_gmp_page,
     find_gmp_link,
+    has_gmp_table,
     parse_listing,
     parse_upcoming_calendar,
 )
 
 IST = ZoneInfo("Asia/Kolkata")
-LISTING_URLS = [
-    "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/",
-    BASE_URL,
-]
+LISTING_URLS = ["https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"]
 # Mainboard + SME calendar: catches newly announced IPOs before they get a GMP table row.
 CALENDAR_URLS = ["https://ipowatch.in/upcoming-ipo-list/"]
 MAX_NEW_FROM_CALENDAR = 10
@@ -186,18 +184,25 @@ def scrape_ipo(
             log.info("Skip %s: already scraped %s ago", entry.name, now - last)
             return None
 
-    details_url = entry.details_url or (existing["details_url"] if existing else None) or f"{BASE_URL}{entry.slug}-ipo/"
+    details_url = entry.details_url or (existing["details_url"] if existing else None) or f"{BASE_URL}{entry.slug}-ipo-details/"
     gmp_url = entry.gmp_url or (existing["gmp_url"] if existing else None)
+    pages: dict[str, str] = {}
+
+    def page(url: str) -> str:  # details and day-wise GMP now share one page: load it once
+        if url not in pages:
+            pages[url] = fetcher.get(url)
+        return pages[url]
+
     details_html: str | None = None
     if gmp_url is None:
-        # Calendar-only IPO: its details page links to the GMP page (if one exists yet).
-        details_html = fetcher.get(details_url)
-        gmp_url = find_gmp_link(details_html)
+        # Calendar-only IPO: its details page carries the GMP table, or links to the GMP page (if one exists yet).
+        details_html = page(details_url)
+        gmp_url = details_url if has_gmp_table(details_html) else find_gmp_link(details_html)
 
     rows: list[GmpRow] = []
     if gmp_url:
         try:
-            rows, linked_details = parse_gmp_page(fetcher.get(gmp_url), today)
+            rows, linked_details = parse_gmp_page(page(gmp_url), today)
             details_url = entry.details_url or linked_details or details_url
             if not rows:
                 log.warning("%s: GMP table present but empty", entry.name)
@@ -223,9 +228,11 @@ def scrape_ipo(
     details_scraped = False
     if need_details:
         try:
-            parsed = parse_details_page(details_html or fetcher.get(details_url))
-            fields = {k: v for k, v in asdict(parsed).items() if k != "raw" and v is not None}
+            parsed = parse_details_page(details_html or page(details_url))
+            fields = {k: v for k, v in asdict(parsed).items() if k not in ("raw", "category") and v is not None}
             meta.update(fields)
+            if entry.from_calendar and parsed.category:  # the calendar doesn't say Mainboard or SME
+                entry.category = parsed.category
             details_scraped = True
             missing = [k for k in ("open_date", "close_date", "price_band_max", "lot_size") if not meta.get(k)]
             if missing:

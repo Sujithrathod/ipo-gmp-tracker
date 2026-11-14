@@ -3,7 +3,17 @@
 Pure functions (HTML string in, dataclasses out) so they can be unit-tested
 against saved fixtures without touching the network.
 
-Page structure (verified Oct 2026):
+Page structure (verified Nov 2026, after the site's redesign):
+- Listing (/ipo-grey-market-premium-latest-ipo-gmp/): one table filled in by
+  the page's own script: IPO Name | IPO GMP | Trend | Price Band | Est. Listing
+  | Date | Type | Status | Last Updated. The name links to the IPO's page.
+- IPO page (/<slug>-ipo-details/): static HTML holding both the "IPO Details"
+  key/value table (IPO Date "18 Nov 2026 to 20 Nov 2026", Price Band, Listing
+  Date), the "IPO Lot Size" table, and the "Day-wise GMP Trend" table
+  (Date & Time | GMP (₹) | Est. Listing Price | Est. Gain (%) | ...).
+- Calendar (/upcoming-ipo-list/): Company | Dates | Price Band | Min Lot | ...
+
+The older layout (until Oct 2026) is still understood:
 - Listing (/ipo-grey-market-premium-latest-ipo-gmp/ and the homepage): one
   TablePress table per section ("Current Mainboard IPO", "Current SME IPO")
   with columns Company | GMP* | Trend | Price Band | Est. Gain | Date. The
@@ -19,7 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
@@ -61,6 +71,7 @@ class IpoMeta:
     price_band_min: float | None = None
     price_band_max: float | None = None
     lot_size: int | None = None
+    category: str | None = None  # mainboard | sme, from "Listing At" (None if not stated)
     about: str | None = None  # "" when the page has no About section
     raw: dict[str, str] = field(default_factory=dict)
 
@@ -76,7 +87,7 @@ _IPOWATCH_HOSTS = {"ipowatch.in", "www.ipowatch.in"}
 def _on_ipowatch(url: str) -> bool:
     parts = urlparse(url)
     return parts.scheme == "https" and (parts.hostname or "") in _IPOWATCH_HOSTS
-_SLUG_SUFFIX = re.compile(r"-ipo(?:-gmp.*)?$")
+_SLUG_SUFFIX = re.compile(r"-ipo(?:-gmp.*|-details)?$")
 _NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
 
@@ -85,21 +96,21 @@ def _text(el: Tag | None) -> str:
 
 
 def slug_from_url(url: str) -> str:
-    """'/acme-steels-ipo-gmp-grey-market-premium/' -> 'acme-steels'."""
+    """'/acme-steels-ipo-gmp-grey-market-premium/' or '/acme-steels-ipo-details/' -> 'acme-steels'."""
     path = urlparse(url).path.strip("/").split("/")[-1]
     return _SLUG_SUFFIX.sub("", path)
 
 
 def parse_rupees(text: str) -> int | None:
-    """'₹247' -> 247, '₹-12' -> -12, '₹-' / '' -> None."""
-    cleaned = text.replace("₹", "").replace(",", "").strip()
+    """'₹247' -> 247, '₹-12' -> -12, '+ ₹ 28' -> 28, '₹-' / '' -> None."""
+    cleaned = re.sub(r"[₹,\s]", "", text).lstrip("+")
     m = re.fullmatch(r"-?\d+(?:\.\d+)?", cleaned)
     return round(float(m.group())) if m else None
 
 
 def parse_percent(text: str) -> float | None:
-    """'22.07%' -> 22.07, '-%' -> None."""
-    cleaned = text.replace("%", "").replace(",", "").strip()
+    """'22.07%' -> 22.07, '+ 10.29 %' -> 10.29, '-%' -> None."""
+    cleaned = re.sub(r"[%,\s]", "", text).lstrip("+")
     m = re.fullmatch(r"-?\d+(?:\.\d+)?", cleaned)
     return float(m.group()) if m else None
 
@@ -168,6 +179,9 @@ def parse_full_date(text: str) -> date | None:
     return None
 
 
+_TIME_OF_DAY = re.compile(r"\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*$", re.I)
+
+
 def parse_history_date(text: str, today: date) -> date | None:
     """Parse '28 October' and infer the year.
 
@@ -175,6 +189,7 @@ def parse_history_date(text: str, today: date) -> date | None:
     on or before today (with a few days' slack for timezone skew). This makes
     a "30 December" row scraped on 2 January resolve to the previous year.
     """
+    text = _TIME_OF_DAY.sub("", text)
     full = parse_full_date(text)
     if full:
         return full
@@ -208,15 +223,31 @@ def _heading_before(table: Tag) -> str:
     return _text(h)
 
 
+def _column(headers: list[str], *names: str) -> int | None:
+    for i, h in enumerate(headers):
+        if any(n in h for n in names):
+            return i
+    return None
+
+
+def _is_sme(text: str) -> bool:
+    text = text.lower()
+    return "sme" in text or "emerge" in text
+
+
 def parse_listing(html: str, base_url: str = BASE_URL) -> list[ListingEntry]:
-    """Parse the live GMP tables from the GMP listing page or homepage."""
+    """Parse the live GMP table(s) from the GMP listing page or homepage."""
     soup = BeautifulSoup(html, "lxml")
     entries: dict[str, ListingEntry] = {}
     for table in soup.find_all("table"):
         headers = _header_cells(table)
-        if not headers or "company" not in headers[0] or not any("gmp" in h for h in headers):
+        if not headers or not ("company" in headers[0] or "ipo name" in headers[0]):
             continue
-        category = "sme" if "sme" in _heading_before(table).lower() else "mainboard"
+        # "GMP vs Listing Performance" is a table of already-listed IPOs, not the live one.
+        if not any("gmp" in h for h in headers) or any("listing price" in h for h in headers):
+            continue
+        i_type, i_status = _column(headers, "type"), _column(headers, "status")
+        heading_sme = _is_sme(_heading_before(table))
         for row in table.find_all("tr")[1:]:
             cells = row.find_all("td")
             if not cells:
@@ -225,12 +256,25 @@ def parse_listing(html: str, base_url: str = BASE_URL) -> list[ListingEntry]:
             if not link:
                 continue
             url = urljoin(base_url, link["href"])
+            path = urlparse(url).path.rstrip("/")
             slug = slug_from_url(url)
-            if not slug or "gmp" not in urlparse(url).path or not _on_ipowatch(url):
+            if not slug or not _on_ipowatch(url):
                 continue
-            status_el = cells[0].find("span")
-            status_text = _text(status_el)
-            site_status = next((s for s in _SITE_STATUSES if status_text.startswith(s)), None)
+            if path.endswith("-ipo-details"):  # one page per IPO: details and day-wise GMP together
+                details_url = url
+            elif "gmp" in path:  # older layout: separate GMP page
+                details_url = None
+            else:
+                continue
+            if i_status is not None and i_status < len(cells):
+                status_text = _text(cells[i_status])
+            else:
+                status_text = _text(cells[0].find("span"))
+            site_status = next((s for s in _SITE_STATUSES if status_text.title().startswith(s)), None)
+            if i_type is not None and i_type < len(cells):
+                category = "sme" if _is_sme(_text(cells[i_type])) else "mainboard"
+            else:
+                category = "sme" if heading_sme else "mainboard"
             entries.setdefault(
                 slug,
                 ListingEntry(
@@ -239,12 +283,14 @@ def parse_listing(html: str, base_url: str = BASE_URL) -> list[ListingEntry]:
                     gmp_url=url,
                     category=category,
                     site_status=site_status,
+                    details_url=details_url,
                 ),
             )
     return list(entries.values())
 
 
 _DATE_RANGE = re.compile(r"(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([A-Za-z]+)")
+_RANGE_SPLIT = re.compile(r"\s+(?:[-–—]|to)\s+", re.I)
 
 
 def parse_date_range(text: str, today: date, not_after: date | None = None) -> tuple[date, date] | None:
@@ -254,6 +300,9 @@ def parse_date_range(text: str, today: date, not_after: date | None = None) -> t
     isn't after `not_after` (default: 60 days from today, since IPOs are
     announced a few weeks ahead at most).
     """
+    full = [parse_full_date(part) for part in _RANGE_SPLIT.split(text.strip())]
+    if len(full) == 2 and all(full):  # '18 Nov 2026 – 20 Nov 2026'
+        return full[0], full[1]
     m = _DATE_RANGE.search(text)
     if not m:
         return None
@@ -292,7 +341,9 @@ def parse_upcoming_calendar(html: str, today: date, base_url: str = BASE_URL) ->
         if not headers or not any("date" in h for h in headers) or any("gmp" in h for h in headers):
             continue
         i_date = next(i for i, h in enumerate(headers) if "date" in h)
-        category = "sme" if "sme" in _heading_before(table).lower() or "platform" in headers else "mainboard"
+        heading = _heading_before(table).lower()
+        # A page-wide "Mainboard & SME" heading says nothing; the IPO's own page settles it later.
+        category = "sme" if (_is_sme(heading) and "mainboard" not in heading) or "platform" in headers else "mainboard"
         # Rows run newest first, so each row can't be much newer than the one
         # above it. That stops last January's rows reading as next January.
         bound: date | None = None
@@ -346,6 +397,10 @@ def _find_gmp_table(soup: BeautifulSoup) -> Tag | None:
     return None
 
 
+def has_gmp_table(html: str) -> bool:
+    return _find_gmp_table(BeautifulSoup(html, "lxml")) is not None
+
+
 def parse_gmp_page(html: str, today: date) -> tuple[list[GmpRow], str | None]:
     """Parse the GMP history table. Returns (rows newest-first, IPO Details tab URL).
 
@@ -368,27 +423,34 @@ def parse_gmp_page(html: str, today: date) -> tuple[list[GmpRow], str | None]:
     i_gmp = col("ipo gmp", "gmp")
     i_trend = col("trend")
     i_gain = col("gain")
-    i_updated = col("updated", "time")
+    i_updated = col("updated")
     if i_gmp is None:
         raise StructureChangedError(f"GMP column missing; headers={headers}")
 
-    rows: list[GmpRow] = []
+    by_day: dict[date, tuple[datetime, GmpRow]] = {}
     for tr in table.find_all("tr")[1:]:
         cells = tr.find_all("td")
         if len(cells) <= i_gmp:
             continue
-        d = parse_history_date(_text(cells[i_date]), today)
+        date_text = _text(cells[i_date])
+        d = parse_history_date(date_text, today)
         if d is None:
             continue
-        rows.append(
-            GmpRow(
-                date=d,
-                gmp=parse_rupees(_text(cells[i_gmp])),
-                trend=parse_trend(cells[i_trend]) if i_trend is not None and i_trend < len(cells) else None,
-                gain_pct=parse_percent(_text(cells[i_gain])) if i_gain is not None and i_gain < len(cells) else None,
-                last_updated=(_text(cells[i_updated]) or None) if i_updated is not None and i_updated < len(cells) else None,
-            )
-        )
+        # "14-Nov-2026 04:00 PM": the time of the update sits in the date cell.
+        stamp = _TIME_OF_DAY.search(date_text)
+        clock = stamp.group(1).upper() if stamp else None
+        when = datetime.combine(d, _parse_clock(clock))
+        if d in by_day and by_day[d][0] >= when:
+            continue  # several updates in a day: keep the latest
+        by_day[d] = (when, GmpRow(
+            date=d,
+            gmp=parse_rupees(_text(cells[i_gmp])),
+            trend=parse_trend(cells[i_trend]) if i_trend is not None and i_trend < len(cells) else None,
+            gain_pct=parse_percent(_text(cells[i_gain])) if i_gain is not None and i_gain < len(cells) else None,
+            last_updated=((_text(cells[i_updated]) or None) if i_updated is not None and i_updated < len(cells) else None)
+            or clock,
+        ))
+    rows = [row for _, row in by_day.values()]
 
     if table.find_all("tr")[1:] and not rows:
         raise StructureChangedError("GMP history table has rows but none could be parsed")
@@ -402,6 +464,15 @@ def parse_gmp_page(html: str, today: date) -> tuple[list[GmpRow], str | None]:
             details_url = urljoin(BASE_URL, a["href"])
             break
     return rows, details_url
+
+
+def _parse_clock(text: str | None) -> time:
+    for fmt in ("%I:%M %p", "%I:%M%p", "%H:%M"):
+        try:
+            return datetime.strptime(text or "", fmt).time()
+        except ValueError:
+            continue
+    return time.min
 
 
 def _fill_missing_trends(rows_newest_first: list[GmpRow]) -> None:
@@ -457,6 +528,14 @@ def parse_details_page(html: str) -> IpoMeta:
     meta.open_date = parse_full_date(find("ipo open date", "open date") or "")
     meta.close_date = parse_full_date(find("ipo close date", "close date") or "")
     meta.listing_date = parse_full_date(find("ipo listing date", "listing date") or "")
+    if not (meta.open_date and meta.close_date):
+        # One row for both: "IPO Date | 18 Nov 2026 to 20 Nov 2026"
+        parts = [parse_full_date(part) for part in _RANGE_SPLIT.split(kv.get("ipo date", "").strip())]
+        if len(parts) == 2 and all(parts):
+            meta.open_date, meta.close_date = parts
+    listing_at = find("listing at")
+    if listing_at:
+        meta.category = "sme" if _is_sme(listing_at) else "mainboard"
 
     band = find("price band", "issue price")
     if band:
@@ -465,15 +544,20 @@ def parse_details_page(html: str) -> IpoMeta:
             meta.price_band_min, meta.price_band_max = min(nums), max(nums)
 
     meta.lot_size = _lot_size(soup)
+    if meta.lot_size is None:  # "Lot Size | 55 Shares"
+        nums = [n for n in parse_numbers(kv.get("lot size", "")) if n > 0]
+        meta.lot_size = int(nums[0]) if nums else None
     meta.about = _about(soup)
     return meta
 
 
+_BLOCKS = ("p", "div", "li")
+
+
 def _about(soup: BeautifulSoup, max_chars: int = 1500) -> str:
-    """Paragraphs under the "About <company> IPO" heading ("" if there's none)."""
-    heading = next(
-        (h for h in soup.find_all(["h2", "h3"]) if _text(h).lower().startswith("about")), None
-    )
+    """Paragraphs under "About Company" (else "About <company> IPO"); "" if there's none."""
+    headings = [h for h in soup.find_all(["h2", "h3"]) if _text(h).lower().startswith("about")]
+    heading = next((h for h in headings if _text(h).lower() == "about company"), headings[0] if headings else None)
     if heading is None:
         return ""
     paras: list[str] = []
@@ -484,6 +568,12 @@ def _about(soup: BeautifulSoup, max_chars: int = 1500) -> str:
             paras.append(_text(el))
         elif el.name in ("ul", "ol"):
             paras.extend(_text(li) for li in el.find_all("li") if _text(li))
+    block = heading.find_next_sibling()
+    if not paras and block is not None and block.name == "div":
+        # Rich text in bare <div>s: take the innermost blocks of the first container only
+        # (later siblings hold contact details, registrar, etc.).
+        leaves = [el for el in [block, *block.find_all(_BLOCKS)] if not el.find(_BLOCKS)]
+        paras = [_text(el) for el in leaves if _text(el)]
     if not paras:  # content wrapped in a container instead of being siblings
         nxt = heading.find_next(["h2", "h3"])
         for p in heading.find_all_next("p", limit=6):
